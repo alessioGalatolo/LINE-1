@@ -12,41 +12,41 @@ from math import exp
 import threading
 from time import time
 from os.path import isfile
-import pickle 
+import pickle
 
-#constants (values taken from original implementation)
-N_THREADS = 1 #number of thread for asynchronous gradient descent
-N_SAMPLES = 50000 #number of samples for training
+# constants (values taken from original implementation)
+N_THREADS = 1  # number of thread for asynchronous gradient descent
+N_SAMPLES = 50000  # number of samples for training
 N_NEGATIVE_SAMPLING = 4
-EMBEDDING_DIMENSION = 124 #the dimension of the embedding
-NEG_SAMPLING_POWER = 0.75 #the power to elevate the negative samples
+EMBEDDING_DIMENSION = 124  # the dimension of the embedding
+NEG_SAMPLING_POWER = 0.75  # the power to elevate the negative samples
 NEG_TABLE_SIZE = 100000
 SIGMOID_TABLE_SIZE = 1000
-SIGMOID_BOUND = 6 #max and min value for sigmoid
+SIGMOID_BOUND = 6  # max and min value for sigmoid
 
-#global variables
+# global variables
 prob, alias = None, None
 negative_table = [0 for _ in range(NEG_TABLE_SIZE)]
 sigmoid_table = [0 for _ in range(SIGMOID_TABLE_SIZE)]
-#the result of the embedding of the vertices
+# the result of the embedding of the vertices
 embedding = None
-#for learning rate
-initial_rho = 0.025 #value from original implementation
+# for learning rate
+initial_rho = 0.025  # value from original implementation
 rho = initial_rho
 current_sample_count = 0
 
 
-#generate various tables for faster computation
+# generate various tables for faster computation
 
 def generate_sigmoid_table():
     """Compute and store common sigmoid values
     """
     global sigmoid_table
     for i in range(SIGMOID_TABLE_SIZE):
-        x =  2 * SIGMOID_BOUND * i / SIGMOID_TABLE_SIZE - SIGMOID_BOUND
+        x = 2 * SIGMOID_BOUND * i / SIGMOID_TABLE_SIZE - SIGMOID_BOUND
         sigmoid_table[i] = 1 / (1 + exp(-x))
 
-    
+
 def generate_negative_table(graph: Graph):
     """Get negative vertex samples according to vertex degrees
 
@@ -66,6 +66,7 @@ def generate_negative_table(graph: Graph):
             vid += 1
         negative_table[i] = list(graph.nodes)[vid - 1 % n_nodes]
 
+
 def generate_alias_table(graph: Graph):
     """ generate alias table for constant time edge sampling.
         Alias table method from: Reducing the sampling complexity of topic models. 
@@ -77,9 +78,9 @@ def generate_alias_table(graph: Graph):
     n_edges = graph.number_of_edges()
     prob, alias = [0 for _ in range(n_edges)], [0 for _ in range(n_edges)]
 
-    #total sum of weights in graph
+    # total sum of weights in graph
     weight_sum = 0
-    #the graph has weights
+    # the graph has weights
     for _, _, w in graph.edges.data("weight"):
         weight_sum += w
     norm_prob = [weight * n_edges / weight_sum for _, _, weight in graph.edges.data("weight")]
@@ -89,9 +90,9 @@ def generate_alias_table(graph: Graph):
     for i in range(len(norm_prob) - 1, -1, -1):
         if norm_prob[i] < 1:
             small_block.append(i)
-        else: 
+        else:
             large_block.append(i)
-    
+
     while len(small_block) > 0 and len(large_block) > 0:
         c_sb = small_block.pop()
         c_lb = large_block.pop()
@@ -102,14 +103,14 @@ def generate_alias_table(graph: Graph):
             small_block.append(c_lb)
         else:
             large_block.append(c_lb)
-    
+
     while len(small_block) > 0:
         prob[small_block.pop()] = 1
     while len(large_block) > 0:
         prob[large_block.pop()] = 1
 
 
-#utility functions
+# utility functions
 
 def fast_sigmoid(x):
     """Compute sigmoid of x reusing store values
@@ -127,6 +128,7 @@ def fast_sigmoid(x):
     k = int((x + SIGMOID_BOUND) * SIGMOID_TABLE_SIZE / SIGMOID_BOUND / 2)
     return sigmoid_table[k]
 
+
 def Rand(seed):
     """Fastly generate a random integer. Code from original source.
 
@@ -140,7 +142,7 @@ def Rand(seed):
     return seed, (seed >> 16) % NEG_TABLE_SIZE
 
 
-#graph related functions
+# graph related functions
 
 def sample_edge(graph, rand1, rand2):
     """sample a random edge
@@ -156,13 +158,14 @@ def sample_edge(graph, rand1, rand2):
     k = int(rand1 * graph.number_of_edges())
     return k if rand2 < prob[k] else alias[k]
 
+
 def update(u, v, error_vector, label):
     """Update embedding
 
     Args:
         u (Number): The index of the source node
         v (Number): The index of the context node
-        error_vector (array-like of Number): The 
+        error_vector (array-like of Number): The
         label ([type]): [description]
     """
     x, g = 0, 0
@@ -183,13 +186,13 @@ def line_thread(seed, graph):
         graph (Graph): the original graph
     """
     print(f"Thread {seed} has been started", flush=True)
-    
+
     thread_id = seed
     global embedding, current_sample_count
     count = 0
-    last_print = 0 #every now and then print whats happening
+    last_print = 0  # every now and then print whats happening
     while count <= N_SAMPLES / N_THREADS + 2:
-        #give sign of life and update rho
+        # give sign of life and update rho
         if count - last_print > 1e3:
             current_sample_count += count - last_print
             last_print = count
@@ -197,8 +200,8 @@ def line_thread(seed, graph):
             rho = initial_rho * (1 - current_sample_count / (N_SAMPLES + 1))
             if rho < initial_rho * 1e-4:
                 rho = initial_rho * 1e-4
-            
-        #sample an edge
+
+        # sample an edge
         edge = sample_edge(graph, np.random.random(), np.random.random())
         u, v = list(graph.edges)[edge]
         error_vector = [0 for _ in range(EMBEDDING_DIMENSION)]
@@ -215,8 +218,9 @@ def line_thread(seed, graph):
             update(u, target, error_vector, label)
 
         for i, val in enumerate(error_vector):
-            embedding[u][i] += val 
+            embedding[u][i] += val
         count += 1
+
 
 def line1(graph: Graph, graph_name=None):
     """Executes LINE1 method on the given graph
@@ -232,8 +236,9 @@ def line1(graph: Graph, graph_name=None):
     Returns:
         dict: contains the pairs (node_id, embedding)
     """
-    #need directed graph
+    # need directed graph
     return line1(graph.to_directed(), graph_name)
+
 
 def line1(graph: DiGraph, graph_name=None):
     """Executed LINE1 method for embedding
@@ -257,14 +262,14 @@ def line1(graph: DiGraph, graph_name=None):
     print(f"Initial rho: {initial_rho}")
     print("--------------------------------")
 
-    #check if graph has weights
+    # check if graph has weights
     if not is_weighted(graph):
-        set_edge_attributes(graph, values = 1, name = 'weight')
+        set_edge_attributes(graph, values=1, name='weight')
 
-    embedding = {u: [(np.random.random() - 0.5) / EMBEDDING_DIMENSION for _ in range(EMBEDDING_DIMENSION)] 
-                for u in graph.nodes}
+    embedding = {u: [(np.random.random() - 0.5) / EMBEDDING_DIMENSION for _ in range(EMBEDDING_DIMENSION)]
+                 for u in graph.nodes}
 
-    #check if embedding has already been done (embedding will be saved in the end)
+    # check if embedding has already been done (embedding will be saved in the end)
     if graph_name is None:
         graph_filename = "line1_" + weisfeiler_lehman_graph_hash(graph) + ".txt"
     else:
@@ -273,7 +278,7 @@ def line1(graph: DiGraph, graph_name=None):
         with open(graph_filename, "rb") as file:
             embedding = pickle.loads(file.read())
         return embedding
-            
+
     generate_alias_table(graph)
     generate_negative_table(graph)
     generate_sigmoid_table()
@@ -290,7 +295,8 @@ def line1(graph: DiGraph, graph_name=None):
         pickle.dump(embedding, file)
     return embedding
 
-#test this method
+
+# test this method
 if __name__ == "__main__":
     graph = read_edgelist("./Datasets/WikiVote.txt", create_using=DiGraph(), nodetype=int, data=(('weight',float),))
 
